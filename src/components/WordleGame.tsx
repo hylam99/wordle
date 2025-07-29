@@ -1,20 +1,41 @@
 'use client';
 
 import { useState, useCallback, useMemo, useEffect } from 'react';
-import { GameService } from '@/services/gameService';
+import { useRouter } from 'next/navigation';
+import { ClientGameService } from '@/services/clientGameService';
 import { ConfigManager } from '@/services/configManager';
 import { defaultConfig, GameConfig } from '@/config/gameConfig';
 import { GuessResult } from '@/types/game';
+import { ClientGameState } from '@/services/serverGameService';
 import WordManager from './WordManager';
 import VirtualKeyboard from './VirtualKeyboard';
 
 export default function WordleGame() {
+  const router = useRouter();
   const [configManager] = useState(() => new ConfigManager(defaultConfig));
-  const [gameService, setGameService] = useState(() => new GameService(configManager.getConfig()));
+  const [clientGameService] = useState(() => new ClientGameService());
   const [guess, setGuess] = useState('');
   const [results, setResults] = useState<GuessResult[][]>([]);
-  const [gameState, setGameState] = useState(gameService.getState());
+  const [gameState, setGameState] = useState<ClientGameState | null>(null);
   const [error, setError] = useState<string>('');
+  const [loading, setLoading] = useState<boolean>(false);
+
+  // Initialize game on component mount
+  useEffect(() => {
+    const initializeGame = async () => {
+      setLoading(true);
+      try {
+        const initialGameState = await clientGameService.createGame(configManager.getConfig());
+        setGameState(initialGameState);
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Failed to initialize game');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    initializeGame();
+  }, [clientGameService, configManager]);
 
   // Track letter states for keyboard coloring
   const letterStates = useMemo(() => {
@@ -35,53 +56,74 @@ export default function WordleGame() {
     return states;
   }, [results]);
 
-  const handleConfigUpdate = useCallback((newConfig: GameConfig) => {
-    gameService.updateConfig(newConfig);
-    // Reset current game state when config changes
-    setResults([]);
-    setGuess('');
-    setGameState(gameService.getState());
-    setError('');
-  }, [gameService]);
-
-  const handleKeyPress = useCallback((key: string) => {
-    if (gameState.gameOver || guess.length >= 5) return;
-    setGuess(prev => prev + key.toLowerCase());
-    setError('');
-  }, [guess.length, gameState.gameOver]);
-
-  const handleBackspace = useCallback(() => {
-    setGuess(prev => prev.slice(0, -1));
-    setError('');
-  }, []);
-
-  const handleEnter = useCallback(() => {
-    if (gameState.gameOver || guess.length !== 5) return;
-    
+  const handleConfigUpdate = useCallback(async (newConfig: GameConfig) => {
+    setLoading(true);
     setError('');
     
     try {
-      const result = gameService.makeGuess(guess);
-      setResults(prev => [...prev, result]);
+      configManager.updateMaxRounds(newConfig.maxRounds);
+      // Reset game with new configuration
+      const newGameState = await clientGameService.resetGame(newConfig);
+      setGameState(newGameState);
+      setResults([]);
       setGuess('');
-      setGameState(gameService.getState());
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Failed to update configuration');
+    } finally {
+      setLoading(false);
+    }
+  }, [clientGameService, configManager]);
+
+  const handleKeyPress = useCallback((key: string) => {
+    if (!gameState || gameState.gameOver || guess.length >= 5 || loading) return;
+    setGuess(prev => prev + key.toLowerCase());
+    setError('');
+  }, [guess.length, gameState, loading]);
+
+  const handleBackspace = useCallback(() => {
+    if (loading) return;
+    setGuess(prev => prev.slice(0, -1));
+    setError('');
+  }, [loading]);
+
+  const handleEnter = useCallback(async () => {
+    if (!gameState || gameState.gameOver || guess.length !== 5 || loading) return;
+    
+    setLoading(true);
+    setError('');
+    
+    try {
+      const response = await clientGameService.makeGuess(guess);
+      setResults(prev => [...prev, response.result]);
+      setGuess('');
+      setGameState(response.gameState);
     } catch (error) {
       setError(error instanceof Error ? error.message : 'An error occurred');
+    } finally {
+      setLoading(false);
     }
-  }, [guess, gameService, gameState.gameOver]);
+  }, [guess, clientGameService, gameState, loading]);
 
-  const handleReset = useCallback(() => {
-    gameService.resetGame();
-    setResults([]);
-    setGuess('');
-    setGameState(gameService.getState());
+  const handleReset = useCallback(async () => {
+    setLoading(true);
     setError('');
-  }, [gameService]);
+    
+    try {
+      const newGameState = await clientGameService.resetGame(configManager.getConfig());
+      setGameState(newGameState);
+      setResults([]);
+      setGuess('');
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Failed to reset game');
+    } finally {
+      setLoading(false);
+    }
+  }, [clientGameService, configManager]);
 
   // Handle physical keyboard input
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (gameState.gameOver) return;
+      if (!gameState || gameState.gameOver || loading) return;
 
       const key = event.key.toLowerCase();
       
@@ -99,7 +141,7 @@ export default function WordleGame() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleKeyPress, handleBackspace, handleEnter, gameState.gameOver]);
+  }, [handleKeyPress, handleBackspace, handleEnter, gameState, loading]);
 
   const getLetterClass = (result: string) => {
     switch (result) {
@@ -114,7 +156,30 @@ export default function WordleGame() {
     }
   };
 
-  const config = gameService.getConfig();
+  // Show loading state while initializing
+  if (loading && !gameState) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50">
+        <div className="text-2xl font-bold text-gray-800 mb-4">Starting New Game...</div>
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+      </div>
+    );
+  }
+
+  if (!gameState) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50">
+        <div className="text-2xl font-bold text-red-600 mb-4">Failed to Start Game</div>
+        <p className="text-gray-600 mb-4">{error || 'Unable to connect to game server'}</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded"
+        >
+          Try Again
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col items-center gap-6 p-8 min-h-screen bg-gray-50">
@@ -127,20 +192,25 @@ export default function WordleGame() {
       <div className="text-center">
         <h1 className="text-4xl font-bold text-gray-800 mb-2">Wordle Game</h1>
         <p className="text-gray-600">
-          Guess the 5-letter word in {config.maxRounds} attempts or less!
+          Guess the 5-letter word in {gameState.maxRounds} attempts or less!
         </p>
+        {clientGameService.getGameId() && (
+          <p className="text-xs text-gray-400 mt-1">
+            Game ID: {clientGameService.getGameId()}
+          </p>
+        )}
       </div>
 
       <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md">
         <div className="text-center mb-4">
           <p className="text-sm text-gray-600">
-            Round {gameState.currentRound} of {config.maxRounds}
+            Round {gameState.currentRound} of {gameState.maxRounds}
           </p>
         </div>
 
         {/* Game Board */}
         <div className="grid gap-2 mb-6">
-          {Array.from({ length: config.maxRounds }, (_, roundIndex) => (
+          {Array.from({ length: gameState.maxRounds }, (_, roundIndex) => (
             <div key={roundIndex} className="flex gap-1 justify-center">
               {Array.from({ length: 5 }, (_, letterIndex) => {
                 const roundResult = results[roundIndex];
@@ -169,6 +239,16 @@ export default function WordleGame() {
           ))}
         </div>
 
+        {/* Loading indicator */}
+        {loading && (
+          <div className="text-center mb-4">
+            <div className="inline-flex items-center gap-2 text-blue-600">
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+              <span className="text-sm">Processing...</span>
+            </div>
+          </div>
+        )}
+
         {/* Error Message */}
         {error && (
           <div className="text-red-500 text-sm text-center bg-red-50 p-2 rounded mb-4">
@@ -188,14 +268,17 @@ export default function WordleGame() {
                 : `Better luck next time!`
               }
             </div>
-            <div className="text-lg font-semibold">
-              The word was: <span className="text-blue-600">{gameState.answer.toUpperCase()}</span>
-            </div>
+            {gameState.answer && (
+              <div className="text-lg font-semibold">
+                The word was: <span className="text-blue-600">{gameState.answer.toUpperCase()}</span>
+              </div>
+            )}
             <button 
               onClick={handleReset}
-              className="bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-6 rounded-lg transition-colors"
+              disabled={loading}
+              className="bg-green-500 hover:bg-green-600 disabled:bg-gray-400 text-white font-bold py-3 px-6 rounded-lg transition-colors"
             >
-              Play Again
+              {loading ? 'Starting...' : 'Play Again'}
             </button>
           </div>
         )}
