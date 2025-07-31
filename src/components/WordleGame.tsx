@@ -181,12 +181,16 @@ export default function WordleGame() {
     );
   }
 
+  // Determine if game has started (user has typed something or made progress)
+  const gameHasStarted = guess.length > 0 || results.length > 0;
+
   return (
-    <div className="flex flex-col items-center gap-6 p-8 min-h-screen bg-gray-50">
+    <div className="flex flex-col items-center gap-6 p-4">
       {/* Word Manager Component */}
       <WordManager 
         configManager={configManager}
         onConfigUpdate={handleConfigUpdate}
+        disabled={gameHasStarted}
       />
 
       <div className="text-center">
@@ -281,7 +285,8 @@ export default function WordleGame() {
               {loading ? 'Starting...' : 'Play Again'}
             </button>
           </div>
-        )}
+        )
+        }
       </div>
 
       {/* Virtual Keyboard */}

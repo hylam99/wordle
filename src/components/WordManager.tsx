@@ -7,9 +7,10 @@ import { GameConfig, MAX_ROUNDS_OPTIONS } from '@/config/gameConfig';
 interface WordManagerProps {
   configManager: ConfigManager;
   onConfigUpdate: (config: GameConfig) => void;
+  disabled?: boolean; // Add disabled prop
 }
 
-export default function WordManager({ configManager, onConfigUpdate }: WordManagerProps) {
+export default function WordManager({ configManager, onConfigUpdate, disabled = false }: WordManagerProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [newWords, setNewWords] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -58,7 +59,13 @@ export default function WordManager({ configManager, onConfigUpdate }: WordManag
     return (
       <button
         onClick={() => setIsOpen(true)}
-        className="fixed top-4 right-4 bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg shadow-lg transition-colors"
+        disabled={disabled}
+        className={`fixed top-4 right-4 px-4 py-2 rounded-lg shadow-lg transition-colors ${
+          disabled
+            ? 'bg-gray-400 text-gray-600 cursor-not-allowed'
+            : 'bg-blue-500 hover:bg-blue-600 text-white'
+        }`}
+        title={disabled ? 'Settings locked - game in progress' : 'Open game settings'}
       >
         ⚙️ Settings ({currentConfig.wordList.length} words, {currentConfig.maxRounds} attempts)
       </button>
