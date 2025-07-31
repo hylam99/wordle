@@ -1,5 +1,6 @@
 'use client';
 
+import HardModeGame from '@/components/HardModeGame';
 import { useRouter } from 'next/navigation';
 
 export default function HardModePage() {
@@ -22,6 +23,7 @@ export default function HardModePage() {
           <p className="text-gray-600">Hard Wordle Game</p>
         </div>
         
+        <HardModeGame />
       </div>
     </main>
   );
